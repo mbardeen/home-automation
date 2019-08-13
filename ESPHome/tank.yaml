@@ -1,0 +1,209 @@
+esphome:
+  name: tank
+  platform: ESP8266
+  board: nodemcuv2
+  
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_on: tank_powersaving 
+
+# Replace with your own information
+wifi:
+  ssid: ""
+  password: ""
+  manual_ip:
+    static_ip: 
+    gateway: 
+    subnet: 
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+ota:
+
+
+globals:
+   - id: valve1_state
+     type: bool
+     restore_value: yes
+
+
+   - id: valve2_state
+     type: bool
+     restore_value: yes
+     
+   - id: tank_full
+     type: bool
+     initial_value: 'false'
+  
+
+
+sensor:
+ 
+  - platform: adc
+    icon: mdi:car-battery
+    pin: A0
+    id: "tank_battery"
+    name: "tank_battery"
+    unit_of_measurement: "v"
+    accuracy_decimals: 3
+    update_interval: 20s
+    filters:
+      - multiply: 15.75
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 5
+          send_first_at: 5
+
+  - platform: ultrasonic
+    trigger_pin: D1
+    echo_pin: D2
+    name: "tank_water_level"
+    update_interval: 20s
+    timeout: 1.9m
+    pulse_time: 20us
+    filters:
+      - filter_out: nan
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 5
+          send_first_at: 5
+          
+    ###***************  Prevent overflow conditions
+    on_value_range:
+        - below: 0.25  #  Tank is almost full, release some water
+          then:
+            - switch.turn_on: tank_valve_1
+            - lambda: |-
+                id(tank_full)=true;
+        - above: 0.35  #  Have released 10cm of water, close the valve again
+          then:  
+            - lambda: |-
+                if (id(tank_full)) { 
+                  id(tank_valve_1).turn_off();
+                  id(tank_full)=false;
+                }
+
+switch:
+#Actual physical switches, hidden from HA because they have no name
+
+  - platform: gpio
+    pin:
+      number: D3
+      inverted: yes
+    id: "tank_valve1_1"
+    
+  - platform: gpio
+    pin:
+      number: D4
+      inverted: yes
+    id: "tank_valve1_2"
+    
+  - platform: gpio
+    pin:
+      number: D5
+      inverted: yes
+    id: "tank_valve2_1"
+    
+  - platform: gpio
+    pin:
+      number: D6
+      inverted: yes
+    id: "tank_valve2_2"
+    
+
+# Virtual switches that properly switch the state of the valves 
+  - platform: template
+    id: "tank_valve_1"
+    name: "tank_valve_1"
+    icon: mdi:water-pump
+    lambda: |-
+      if (id(valve1_state)) {
+        return true;
+      } else {
+        return false;
+      }    
+    turn_on_action:
+      - lambda: |-
+          id(valve1_state)=true;
+      - switch.turn_on: tank_valve1_2
+      - delay: 15s
+      - switch.turn_off: tank_valve1_2
+    turn_off_action:
+      - lambda: |-
+          id(valve1_state)=false;
+      - switch.turn_on: tank_valve1_1
+      - delay: 15s
+      - switch.turn_off: tank_valve1_1
+
+      
+
+  - platform: template
+    icon: mdi:water-pump
+    id: "tank_valve_2"
+    name: "tank_valve_2"
+    lambda: |-
+      if (id(valve2_state)) {
+        return true;
+      } else {
+        return false;
+      }    
+    turn_on_action:
+      - lambda: |-
+          id(valve2_state)=true;
+      - switch.turn_on: tank_valve2_1
+      - delay: 15s
+      - switch.turn_off: tank_valve2_1
+    turn_off_action:
+      - lambda: |-
+          id(valve2_state)=false;
+      - switch.turn_on: tank_valve2_2
+      - delay: 15s
+      - switch.turn_off: tank_valve2_2
+  
+  
+# Turn off all valves  
+  - platform: template
+    name: "tank_off"
+    id: "irrigation_off"
+    icon: mdi:water-pump
+    turn_on_action:
+      - switch.turn_off: tank_valve_1
+      - switch.turn_off: tank_valve_2
+
+# Turn off all the relays to save power
+  - platform: template
+    id: "tank_powersaving"
+    name: "powersaving"
+    icon: mdi:water-pump
+    turn_on_action:
+      - switch.turn_off: tank_valve1_1
+      - switch.turn_off: tank_valve1_2
+      - switch.turn_off: tank_valve2_1
+      - switch.turn_off: tank_valve2_2
+
+
+      
+
+  - platform: template
+    name: "tank_battery_low"
+    lambda: |-
+      if (id(tank_battery).state < 12.1) {
+        // Battery low
+        return true;
+      } else {
+        return false;
+      }
+      
+  - platform: template
+    name: "tank_battery_critical"
+    lambda: |-
+      if (id(tank_battery).state < 11.9) {
+        // Battery Critical
+        return true;
+      } else {
+        return false;
+      }       
